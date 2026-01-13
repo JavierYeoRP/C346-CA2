@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
 # dependencies
@@ -39,3 +40,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+=======
+node_modules
+>>>>>>> 1e195badccda86e0f88e93ec61ed0e385c9be601
