@@ -1,7 +1,31 @@
-import React, { useCallback, useState } from "react";
-import { View, Text, FlatList, Pressable, StyleSheet, Alert } from "react-native";
+import React, { useCallback, useMemo, useState } from "react";
+import {
+  View,
+  Text,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  StatusBar,
+} from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import { getHabits, getCategories, deleteHabit } from "../services/api";
+
+const BASE_URL = "https://habit-tracker-app-y1zf.onrender.com";
+
+// ✅ Theme (Green Plan vibe)
+const THEME = {
+  bg: "#F4FBF7",
+  card: "#FFFFFF",
+  text: "#0F172A",
+  subtext: "#64748B",
+  border: "#E2E8F0",
+  primary: "#16A34A",
+  primarySoft: "#DCFCE7",
+  danger: "#DC2626",
+  chip: "#F1F5F9",
+  shadow: "#000000",
+};
 
 export default function HomeScreen({ navigation }) {
   const [habits, setHabits] = useState([]);
@@ -12,11 +36,19 @@ export default function HomeScreen({ navigation }) {
   const loadAll = async () => {
     setLoading(true);
     try {
-      const [habitData, catData] = await Promise.all([getHabits(), getCategories()]);
-      setHabits(habitData);
-      setCategories(catData);
+      const [habRes, catRes] = await Promise.all([
+        fetch(`${BASE_URL}/habits`),
+        fetch(`${BASE_URL}/categories`),
+      ]);
+
+      const habData = await habRes.json();
+      const catData = await catRes.json();
+
+      setHabits(Array.isArray(habData) ? habData : []);
+      setCategories(Array.isArray(catData) ? catData : []);
     } catch (e) {
-      Alert.alert("Error", e.message);
+      console.error(e);
+      Alert.alert("Error", "Failed to load data from server.");
     } finally {
       setLoading(false);
     }
@@ -28,175 +60,277 @@ export default function HomeScreen({ navigation }) {
     }, [])
   );
 
-  const filteredHabits =
-    selectedCat === "all"
-      ? habits
-      : habits.filter((h) => String(h.category_id) === String(selectedCat));
+  const filteredHabits = useMemo(() => {
+    if (selectedCat === "all") return habits;
+    return habits.filter((h) => String(h.category_id) === String(selectedCat));
+  }, [habits, selectedCat]);
 
-  // Dashboard stats
   const total = habits.length;
 
-  const weekCount = (() => {
+  const weekCount = useMemo(() => {
     const now = new Date();
     const diffDays = (d) => Math.floor((now - new Date(d)) / (1000 * 60 * 60 * 24));
-    return habits.filter((h) => diffDays(h.date) <= 6).length; // last 7 days
-  })();
+    return habits.filter((h) => diffDays(h.date) >= 0 && diffDays(h.date) <= 6).length;
+  }, [habits]);
 
-  const topCategory = (() => {
+  const topCategory = useMemo(() => {
     if (!habits.length) return "-";
     const count = {};
     habits.forEach((h) => {
       const key = h.category_name || String(h.category_id);
       count[key] = (count[key] || 0) + 1;
     });
-    return Object.entries(count).sort((a, b) => b[1] - a[1])[0][0];
-  })();
+    return Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
+  }, [habits]);
 
-  const onDelete = (id) => {
+  const confirmDelete = (id) => {
     Alert.alert("Delete habit?", "This cannot be undone.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
-        onPress: async () => {
-          try {
-            await deleteHabit(id);
-            loadAll();
-          } catch (e) {
-            Alert.alert("Error", e.message);
-          }
-        },
+        onPress: () => handleDelete(id),
       },
     ]);
   };
 
-  return (
-    <View style={styles.container}>
-      {/* Dashboard */}
-      <View style={styles.dashboard}>
-        <View style={styles.statRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Total Logged</Text>
-            <Text style={styles.statValue}>{total}</Text>
-          </View>
+  const handleDelete = async (id) => {
+    try {
+      const res = await fetch(`${BASE_URL}/habits/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) return Alert.alert("Error", data?.message || "Delete failed");
+      loadAll();
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Error", "Failed to delete habit.");
+    }
+  };
 
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>This Week</Text>
-            <Text style={styles.statValue}>{weekCount}</Text>
+  const StatCard = ({ label, value }) => (
+    <View style={styles.statCard}>
+      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={styles.statValue}>{value}</Text>
+    </View>
+  );
+
+  const Chip = ({ label, active, onPress }) => (
+    <Pressable
+      onPress={onPress}
+      style={[styles.chip, active && styles.chipActive]}
+      android_ripple={{ color: "#00000010" }}
+    >
+      <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
+    </Pressable>
+  );
+
+  const HabitItem = ({ item }) => (
+    <Pressable
+      style={styles.habitCard}
+      onPress={() => navigation.navigate("EditHabit", { habit: item })}
+      android_ripple={{ color: "#00000010" }}
+    >
+      <View style={{ flex: 1 }}>
+        <View style={styles.habitTopRow}>
+          <Text style={styles.habitTitle} numberOfLines={1}>
+            {item.title}
+          </Text>
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>{item.category_name}</Text>
           </View>
         </View>
 
-        <View style={styles.statRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Top Category</Text>
-            <Text style={styles.statValue}>{topCategory}</Text>
-          </View>
-
-          <Pressable style={styles.addBtn} onPress={() => navigation.navigate("AddHabit")}>
-            <Text style={styles.addBtnText}>+ Add Habit</Text>
-          </Pressable>
-        </View>
+        <Text style={styles.habitMeta}>{formatDate(item.date)}</Text>
+        {item.notes ? <Text style={styles.habitNotes} numberOfLines={2}>{item.notes}</Text> : null}
       </View>
 
-      {/* Category Filter */}
-      <Text style={styles.sectionTitle}>Filter by Category</Text>
-      <View style={styles.filterRow}>
-        <Pressable
-          style={[styles.chip, selectedCat === "all" && styles.chipActive]}
-          onPress={() => setSelectedCat("all")}
-        >
-          <Text style={styles.chipText}>All</Text>
-        </Pressable>
+      <Pressable onPress={() => confirmDelete(item.id)} style={styles.deleteBtn}>
+        <Text style={styles.deleteText}>Delete</Text>
+      </Pressable>
+    </Pressable>
+  );
 
+  return (
+    <View style={styles.screen}>
+      <StatusBar barStyle="dark-content" />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <View>
+          <Text style={styles.h1}>Green Habits</Text>
+          <Text style={styles.h2}>Track sustainable actions aligned with SG Green Plan.</Text>
+        </View>
+        <Pressable style={styles.primaryBtn} onPress={() => navigation.navigate("AddHabit")}>
+          <Text style={styles.primaryBtnText}>+ Add</Text>
+        </Pressable>
+      </View>
+
+      {/* Dashboard */}
+      <View style={styles.dashboard}>
+        <StatCard label="Total Logged" value={total} />
+        <StatCard label="This Week" value={weekCount} />
+        <StatCard label="Top Category" value={topCategory} />
+      </View>
+
+      {/* Filter */}
+      <View style={styles.sectionRow}>
+        <Text style={styles.sectionTitle}>Filter</Text>
+        {loading ? (
+          <View style={{ flexDirection: "row", alignItems: "center" }}>
+            <ActivityIndicator size="small" />
+            <Text style={{ marginLeft: 8, color: THEME.subtext }}>Syncing…</Text>
+          </View>
+        ) : null}
+      </View>
+
+      <View style={styles.chipRow}>
+        <Chip label="All" active={selectedCat === "all"} onPress={() => setSelectedCat("all")} />
         {categories.map((c) => (
-          <Pressable
+          <Chip
             key={c.id}
-            style={[styles.chip, selectedCat === String(c.id) && styles.chipActive]}
+            label={c.name}
+            active={selectedCat === String(c.id)}
             onPress={() => setSelectedCat(String(c.id))}
-          >
-            <Text style={styles.chipText}>{c.name}</Text>
-          </Pressable>
+          />
         ))}
       </View>
 
       {/* List */}
-      <Text style={styles.sectionTitle}>Recent Habits</Text>
+      <Text style={[styles.sectionTitle, { marginTop: 12 }]}>Recent Habits</Text>
 
       <FlatList
         data={filteredHabits}
         keyExtractor={(item) => String(item.id)}
         refreshing={loading}
         onRefresh={loadAll}
-        contentContainerStyle={{ paddingBottom: 24 }}
-        renderItem={({ item }) => (
-          <Pressable
-            style={styles.habitItem}
-            onPress={() => navigation.navigate("EditHabit", { habit: item })}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={styles.habitTitle}>{item.title}</Text>
-              <Text style={styles.habitMeta}>
-                {(item.category_name || "Category")} • {item.date}
-              </Text>
-            </View>
-
-            <Pressable onPress={() => onDelete(item.id)} style={styles.deleteBtn}>
-              <Text style={styles.deleteText}>Delete</Text>
-            </Pressable>
-          </Pressable>
-        )}
+        contentContainerStyle={{ paddingBottom: 24, paddingTop: 10 }}
+        renderItem={({ item }) => <HabitItem item={item} />}
         ListEmptyComponent={
-          <Text style={{ opacity: 0.6, marginTop: 12 }}>
-            No habits yet. Tap “Add Habit” to start.
-          </Text>
+          <View style={styles.emptyWrap}>
+            <Text style={styles.emptyTitle}>No habits yet</Text>
+            <Text style={styles.emptyText}>
+              Start by adding one sustainable action — it can be small.
+            </Text>
+            <Pressable style={[styles.primaryBtn, { marginTop: 12 }]} onPress={() => navigation.navigate("AddHabit")}>
+              <Text style={styles.primaryBtnText}>Add your first habit</Text>
+            </Pressable>
+          </View>
         }
       />
     </View>
   );
 }
 
+function formatDate(isoDate) {
+  // isoDate = "2026-01-13"
+  if (!isoDate) return "";
+  const [y, m, d] = isoDate.split("-");
+  return `${d}/${m}/${y}`;
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16 },
-  dashboard: { gap: 12, marginBottom: 14 },
-  statRow: { flexDirection: "row", gap: 12 },
+  screen: { flex: 1, backgroundColor: THEME.bg, paddingHorizontal: 16, paddingTop: 14 },
+
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 12,
+  },
+  h1: { fontSize: 22, fontWeight: "900", color: THEME.text },
+  h2: { marginTop: 2, color: THEME.subtext, fontWeight: "600", maxWidth: 240 },
+
+  primaryBtn: {
+    backgroundColor: THEME.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    shadowColor: THEME.shadow,
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 3,
+  },
+  primaryBtnText: { color: "#fff", fontWeight: "900" },
+
+  dashboard: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 4,
+  },
   statCard: {
     flex: 1,
-    borderWidth: 1,
+    backgroundColor: THEME.card,
     borderRadius: 14,
-    padding: 14,
-  },
-  statLabel: { opacity: 0.7, fontWeight: "700" },
-  statValue: { fontSize: 22, fontWeight: "900", marginTop: 8 },
-
-  addBtn: {
-    flex: 1,
+    padding: 12,
     borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
-    alignItems: "center",
-    justifyContent: "center",
+    borderColor: THEME.border,
+    shadowColor: THEME.shadow,
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
   },
-  addBtnText: { fontWeight: "900" },
+  statLabel: { color: THEME.subtext, fontWeight: "800", fontSize: 12 },
+  statValue: { marginTop: 8, fontSize: 18, fontWeight: "900", color: THEME.text },
 
-  sectionTitle: { marginTop: 10, marginBottom: 8, fontSize: 16, fontWeight: "900" },
+  sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14 },
+  sectionTitle: { fontSize: 14, fontWeight: "900", color: THEME.text },
 
-  filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
-  chip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
-  chipActive: { opacity: 0.85 },
-  chipText: { fontWeight: "800" },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  chip: {
+    backgroundColor: THEME.chip,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  chipActive: { backgroundColor: THEME.primarySoft, borderColor: "#86EFAC" },
+  chipText: { fontWeight: "800", color: THEME.subtext },
+  chipTextActive: { color: "#166534" },
 
-  habitItem: {
+  habitCard: {
+    backgroundColor: THEME.card,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: THEME.border,
     flexDirection: "row",
-    gap: 12,
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
     alignItems: "center",
-    marginBottom: 10,
+    gap: 12,
+    shadowColor: THEME.shadow,
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 2,
   },
-  habitTitle: { fontSize: 15, fontWeight: "900" },
-  habitMeta: { marginTop: 4, opacity: 0.7 },
+  habitTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  habitTitle: { fontSize: 15, fontWeight: "900", color: THEME.text, flex: 1 },
+  habitMeta: { marginTop: 6, color: THEME.subtext, fontWeight: "700" },
+  habitNotes: { marginTop: 6, color: THEME.subtext, fontWeight: "600" },
 
-  deleteBtn: { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
-  deleteText: { fontWeight: "900" },
+  badge: { backgroundColor: THEME.primarySoft, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },
+  badgeText: { color: "#166534", fontWeight: "900", fontSize: 12 },
+
+  deleteBtn: {
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+    backgroundColor: "#FEF2F2",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  deleteText: { color: THEME.danger, fontWeight: "900" },
+
+  emptyWrap: {
+    backgroundColor: THEME.card,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    padding: 16,
+    marginTop: 8,
+  },
+  emptyTitle: { fontSize: 16, fontWeight: "900", color: THEME.text },
+  emptyText: { marginTop: 6, color: THEME.subtext, fontWeight: "600", lineHeight: 18 },
 });
